@@ -1,73 +1,88 @@
+#include <SoftwareSerial.h>
+
 #include <HTTPClient.h>
 
-#include <SoftwareSerial.h>
 #include <SPI.h>
+#include <HttpClient.h>
 #include <Ethernet.h>
+#include <EthernetClient.h>
 #include <Metro.h>
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
-byte server[] = {192,168,1,5};
 
-unsigned long lastConnectionTime = 0;             // last time you connected to the server, in milliseconds
-boolean lastConnected = false;                    // state of the connection last time through the main loop
-const unsigned long postingInterval = 5L*1000L;  // delay between updates, in millisecond
+//byte server[] = {192,168,1,5};
+const char kHostname[] = "api.xks.im";
+const char kPath[] = "/dangoprinter/message-raw";
+
+
+
+//unsigned long lastConnectionTime = 0;             // last time you connected to the server, in milliseconds
+//boolean lastConnected = false;                    // state of the connection last time through the main loop
+//const unsigned long postingInterval = 5L*1000L;  // delay between updates, in millisecond
 
 EthernetClient client;
+HttpClient http(client);
 SoftwareSerial ps(2, 3); // RX, TX
-Metro sendingMetro = Metro(10000L);
+Metro sendingMetro = Metro(1000L);
 
-char data[40];
+// Number of milliseconds to wait without receiving any data before we give up
+const int kNetworkTimeout = 30*1000;
+// Number of milliseconds to wait if no data is available before trying again
+const int kNetworkDelay = 1;
 
 void setup() {
   // put your setup code here, to run once:
   ps.begin(9600);
+  ps.write(0x1c);
+  ps.write(0x40);
+  ps.write(0x04);  
+  ps.begin(38400);
   Ethernet.begin(mac);
   delay(1000);
+  ps.print("DangoPrinter\n");
+  ps.print(Ethernet.localIP());
+  ps.print("\n\n\n");
   //while (true);
 }
 
 void loop() {
-  if(sendingMetro.check() && !client.connected() ) {
-    HTTPClient client( "KESHUAI-PC", server );
-    FILE* result = client.getURI("/dangoprinter/message");
-    const int MAX_SIZE = 10;
-    char buf[MAX_SIZE];
-    if (!fgets(buf, MAX_SIZE, result)) {
-      ps.println("error");
-    } else {
-      ps.write(buf);
-    }    
-    
-    /*
-////////
-    int inByte = 0;
-    while (inByte != EOF){      
-      inByte = fgetc(result);
-      ps.write(inByte);      
+  if(sendingMetro.check()) {    
+    http.get(kHostname, kPath);
+    int responseCode = http.responseStatusCode();
+    if (responseCode == 200){
+      http.skipResponseHeaders();
+        int bodyLen = http.contentLength();
+        // Now we've got to the body, so we can print it out
+        unsigned long timeoutStart = millis();
+        char c;
+        // Whilst we haven't timed out & haven't reached the end of the body
+        while ( (http.connected() || http.available()) &&
+               ((millis() - timeoutStart) < kNetworkTimeout) )
+        {
+            if (http.available())
+            {
+                c = http.read();
+                // Print out this character
+                ps.write(c);
+                //ps.println(c,HEX);
+                bodyLen--;
+                // We read something, reset the timeout counter
+                timeoutStart = millis();
+            }
+            else
+            {
+                // We haven't got any data, so let's pause to allow some to
+                // arrive
+                delay(kNetworkDelay);
+            }
+        }
+      
+    } else if (responseCode == 201){
+      
     }
-////////
-*/
-    int returnCode = client.getLastReturnCode();
+    http.stop();
     
-    if (result!=NULL) {
-      client.closeStream(result);  // this is very important -- be sure to close the STREAM
-    } 
-    else {
-      ps.println("failed to connect");
-    }
-    
-    if (returnCode==200) {
-      ps.println("data uploaded");
-    } 
-    else {
-      ps.print("ERROR: Server returned ");
-      ps.println(returnCode);
-    }
   }
-  
-  
-  // store the state of the connection for next time through
-  // the loop:
-  lastConnected = client.connected();
+
 }
     
  
